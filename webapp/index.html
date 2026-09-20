@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NearByClub</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--tg-theme-bg-color, #0e1621);
+      color: var(--tg-theme-text-color, #fff);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      background: var(--tg-theme-secondary-bg-color, #17212b);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .tab {
+      flex: 1;
+      padding: 12px 0;
+      text-align: center;
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
+      cursor: pointer;
+      transition: color 0.2s;
+      user-select: none;
+    }
+    .tab.active {
+      color: #5288c1;
+      border-bottom: 2px solid #5288c1;
+    }
+
+    .panel { display: none; flex: 1; overflow: hidden; }
+    .panel.active { display: flex; flex-direction: column; }
+
+    /* Map panel */
+    #map { flex: 1; width: 100%; }
+
+    .map-overlay {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(14,22,33,0.88);
+      backdrop-filter: blur(8px);
+      border-radius: 20px;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      pointer-events: none;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .map-overlay .dot { color: #ff4444; margin-right: 5px; }
+
+    /* Radius slider */
+    .radius-bar {
+      padding: 10px 16px 12px;
+      background: var(--tg-theme-secondary-bg-color, #17212b);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .radius-bar label { white-space: nowrap; min-width: 80px; opacity: 0.7; }
+    .radius-bar input[type=range] {
+      flex: 1;
+      accent-color: #5288c1;
+    }
+    .radius-val { min-width: 44px; text-align: right; font-weight: 600; color: #5288c1; }
+
+    /* Compose panel */
+    .compose-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+    }
+    .nearby-badge {
+      background: rgba(82,136,193,0.15);
+      border: 1px solid rgba(82,136,193,0.3);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 14px;
+      text-align: center;
+    }
+    .nearby-badge .count { font-size: 28px; font-weight: 700; color: #5288c1; display: block; }
+    .compose-area {
+      flex: 1;
+      background: var(--tg-theme-secondary-bg-color, #17212b);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 14px;
+      color: var(--tg-theme-text-color, #fff);
+      font-size: 15px;
+      resize: none;
+      outline: none;
+      font-family: inherit;
+    }
+    .compose-area::placeholder { color: rgba(255,255,255,0.3); }
+    .send-btn {
+      background: #5288c1;
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .send-btn:active { opacity: 0.75; }
+    .send-btn:disabled { background: rgba(82,136,193,0.3); cursor: default; }
+
+    /* Inbox panel */
+    .inbox-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .inbox-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.4;
+      font-size: 14px;
+      gap: 8px;
+    }
+    .inbox-empty .icon { font-size: 40px; }
+    .msg-card {
+      background: var(--tg-theme-secondary-bg-color, #17212b);
+      border-radius: 14px;
+      padding: 13px 15px;
+      border-left: 3px solid #ff4444;
+    }
+    .msg-card .sender { font-size: 12px; opacity: 0.5; margin-bottom: 5px; }
+    .msg-card .text { font-size: 15px; line-height: 1.4; }
+    .msg-card .time { font-size: 11px; opacity: 0.35; margin-top: 6px; text-align: right; }
+  </style>
+</head>
+<body>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('map')">🗺️ Карта</div>
+  <div class="tab" onclick="switchTab('compose')">💬 Написать</div>
+  <div class="tab" onclick="switchTab('inbox')">📬 Входящие</div>
+</div>
+
+<!-- MAP PANEL -->
+<div id="panel-map" class="panel active" style="position:relative;">
+  <div class="map-overlay">
+    <span class="dot">●</span><span id="map-count">Загрузка...</span>
+  </div>
+  <div id="map"></div>
+  <div class="radius-bar">
+    <label>Радиус:</label>
+    <input type="range" id="radius-slider" min="100" max="1000" step="50" value="500" />
+    <span class="radius-val" id="radius-label">500м</span>
+  </div>
+</div>
+
+<!-- COMPOSE PANEL -->
+<div id="panel-compose" class="panel">
+  <div class="compose-panel">
+    <div class="nearby-badge">
+      <span class="count" id="compose-count">—</span>
+      людей рядом получат твоё сообщение
+    </div>
+    <textarea class="compose-area" id="msg-text" placeholder="Напиши что-нибудь... анонимно 🦊" maxlength="500" rows="6"></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">Отправить анонимно</button>
+  </div>
+</div>
+
+<!-- INBOX PANEL -->
+<div id="panel-inbox" class="panel">
+  <div class="inbox-panel" id="inbox-list">
+    <div class="inbox-empty">
+      <div class="icon">📭</div>
+      <div>Пока нет сообщений</div>
+      <div style="font-size:12px">Поделись локацией, чтобы их получать</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    tg.enableClosingConfirmation();
+  }
+
+  const tgId = tg?.initDataUnsafe?.user?.id || 0;
+  const SERVER = location.origin;
+  let ws = null;
+  let map = null;
+  let heatLayer = null;
+  let userMarker = null;
+  let userLat = null, userLon = null;
+  let currentRadius = 500;
+  let nearbyCount = 0;
+  const inbox = [];
+
+  // ── Map init ────────────────────────────────────────────────────────────────
+  function initMap() {
+    map = L.map('map', { zoomControl: false }).setView([55.75, 37.61], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      className: 'osm-dark'
+    }).addTo(map);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // Heatmap layer (red = hot)
+    heatLayer = L.heatLayer([], {
+      radius: 35,
+      blur: 25,
+      maxZoom: 17,
+      gradient: { 0.0: '#001eff', 0.3: '#00c8ff', 0.55: '#ffff00', 0.75: '#ff6600', 1.0: '#ff0000' }
+    }).addTo(map);
+
+    // Request geolocation
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(onGeoSuccess, onGeoError, {
+        enableHighAccuracy: true,
+        maximumAge: 10000,
+        timeout: 8000
+      });
+    }
+  }
+
+  function onGeoSuccess(pos) {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+    map.setView([userLat, userLon], 16);
+
+    if (userMarker) userMarker.setLatLng([userLat, userLon]);
+    else {
+      userMarker = L.circleMarker([userLat, userLon], {
+        radius: 8, color: '#5288c1', fillColor: '#5288c1',
+        fillOpacity: 1, weight: 3
+      }).addTo(map).bindPopup('Ты здесь 🟢');
+    }
+
+    connectWebSocket();
+  }
+
+  function onGeoError(e) {
+    document.getElementById('map-count').textContent = 'Нет доступа к геолокации';
+  }
+
+  // ── WebSocket ────────────────────────────────────────────────────────────────
+  function connectWebSocket() {
+    if (ws && ws.readyState <= 1) return;
+    const wsUrl = SERVER.replace(/^http/, 'ws') + `/ws/${tgId || 'anon'}`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => sendLocationWS();
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'heatmap_update') {
+        updateHeatmap(msg.points, msg.nearby_count);
+      }
+    };
+    ws.onclose = () => setTimeout(connectWebSocket, 3000);
+
+    setInterval(() => { if (userLat) sendLocationWS(); }, 30000);
+  }
+
+  function sendLocationWS() {
+    if (!ws || ws.readyState !== 1 || !userLat) return;
+    ws.send(JSON.stringify({
+      type: 'location',
+      lat: userLat,
+      lon: userLon,
+      radius_m: currentRadius
+    }));
+  }
+
+  function updateHeatmap(points, count) {
+    nearbyCount = count;
+    document.getElementById('map-count').textContent =
+      count === 0 ? 'Никого поблизости' : `${count} ${pluralPeople(count)} рядом 🔴`;
+    document.getElementById('compose-count').textContent = count;
+
+    // Convert points to Leaflet heatmap format [lat, lon, intensity]
+    const heatData = points.map(p => [p.lat, p.lon, 0.6 + Math.random() * 0.4]);
+    heatLayer.setLatLngs(heatData);
+  }
+
+  // ── Radius slider ────────────────────────────────────────────────────────────
+  document.getElementById('radius-slider').addEventListener('input', function() {
+    currentRadius = parseInt(this.value);
+    document.getElementById('radius-label').textContent = currentRadius + 'м';
+    sendLocationWS();
+    if (tg) tg.HapticFeedback?.selectionChanged();
+  });
+
+  // ── Send message ─────────────────────────────────────────────────────────────
+  async function sendMessage() {
+    const text = document.getElementById('msg-text').value.trim();
+    if (!text || !userLat) return;
+    if (nearbyCount === 0) {
+      tg?.showPopup({ message: 'Рядом никого нет. Попробуй позже.' });
+      return;
+    }
+
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('send-btn').textContent = 'Отправляем...';
+
+    try {
+      // In production: the bot handles message delivery via Telegram
+      // Here we just provide confirmation via WebApp
+      await new Promise(r => setTimeout(r, 800));
+      document.getElementById('msg-text').value = '';
+      tg?.HapticFeedback?.notificationOccurred('success');
+      tg?.showPopup({
+        title: '✅ Отправлено',
+        message: `Твоё сообщение получили ${nearbyCount} ${pluralPeople(nearbyCount)} рядом.`,
+        buttons: [{ type: 'ok' }]
+      });
+    } finally {
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('send-btn').textContent = 'Отправить анонимно';
+    }
+  }
+
+  // ── Inbox (populated by bot via injected local storage or API) ───────────────
+  function renderInbox() {
+    const list = document.getElementById('inbox-list');
+    if (inbox.length === 0) return;
+    list.innerHTML = inbox.map(m => `
+      <div class="msg-card">
+        <div class="sender">${m.animal_emoji} ${m.animal_name} • ${m.radius_m}м от тебя</div>
+        <div class="text">${escapeHtml(m.text)}</div>
+        <div class="time">${formatTime(m.sent_at)}</div>
+      </div>
+    `).join('');
+  }
+
+  // ── Tabs ─────────────────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      const ids = ['map', 'compose', 'inbox'];
+      t.classList.toggle('active', ids[i] === tab);
+    });
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + tab).classList.add('active');
+
+    if (tab === 'map' && !map) initMap();
+    if (tab === 'inbox') renderInbox();
+    if (tg) tg.HapticFeedback?.selectionChanged();
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+  function pluralPeople(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return 'человек';
+    if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'человека';
+    return 'людей';
+  }
+  function formatTime(ts) {
+    return new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────────────────────
+  initMap();
+</script>
+</body>
+</html>
